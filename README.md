@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.png" alt="Open Brain" width="600">
+</p>
+
 # Open Brain
 
 Standalone knowledge infrastructure for AI agents. PGVector semantic search, local embeddings, and Obsidian vault sync — accessible via REST API or MCP.
