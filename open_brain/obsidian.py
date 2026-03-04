@@ -46,7 +46,10 @@ class VaultImporter:
     """Imports Obsidian vault .md files into OpenBrain for semantic search."""
 
     def __init__(self, vault_path: Optional[str] = None):
-        self.vault_path = Path(vault_path or OBSIDIAN_VAULT_PATH)
+        resolved = vault_path or OBSIDIAN_VAULT_PATH
+        if not resolved:
+            logger.warning("OBSIDIAN_VAULT not set — vault operations disabled")
+        self.vault_path = Path(resolved) if resolved else None
         self.kb = KnowledgeBase()
         self._embed_service = None
 
@@ -66,9 +69,10 @@ class VaultImporter:
         Returns:
             Stats dict with imported/skipped/error counts.
         """
-        if not self.vault_path.exists():
-            logger.error("Obsidian vault not found: %s", self.vault_path)
-            return {"error": f"Vault not found: {self.vault_path}"}
+        if not self.vault_path or not self.vault_path.exists():
+            msg = "OBSIDIAN_VAULT not set" if not self.vault_path else f"Vault not found: {self.vault_path}"
+            logger.error(msg)
+            return {"error": msg}
 
         last_sync = get_last_sync_timestamp() if not force_full else 0.0
         stats = {"imported": 0, "skipped": 0, "errors": 0, "updated": 0}
@@ -155,7 +159,7 @@ class SummaryExporter:
 
     def __init__(self, vault_path: Optional[str] = None):
         summary_dir = vault_path or OBSIDIAN_SUMMARY_DIR
-        self.summary_dir = Path(summary_dir)
+        self.summary_dir = Path(summary_dir) if summary_dir else None
         self.kb = KnowledgeBase()
 
     async def write_daily_summary(self) -> Optional[str]:
@@ -240,7 +244,8 @@ class ObsidianSync:
     """Syncs chat history to Obsidian vault as markdown notes."""
 
     def __init__(self, vault_path: Optional[str] = None):
-        self.vault_path = Path(vault_path or OBSIDIAN_VAULT_PATH)
+        resolved = vault_path or OBSIDIAN_VAULT_PATH
+        self.vault_path = Path(resolved) if resolved else None
         self.template_path = OBSIDIAN_TEMPLATE
         self.kb = KnowledgeBase()
 

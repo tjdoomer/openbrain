@@ -14,6 +14,7 @@ Any agent (Claude, LM Studio, custom scripts) can capture memories and search ac
 git clone https://github.com/tjdoomer/openbrain.git ~/open-brain
 cd ~/open-brain
 cp .env.example .env
+# Edit .env and set PGVECTOR_PASSWORD before starting Docker
 pip install -r requirements.txt
 ```
 
