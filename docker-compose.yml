@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: ankane/pgvector:latest
+    container_name: open-brain-pgvector
+    environment:
+      POSTGRES_DB: braindb
+      POSTGRES_USER: brainuser
+      POSTGRES_PASSWORD: ${PGVECTOR_PASSWORD:?Set PGVECTOR_PASSWORD in .env}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
