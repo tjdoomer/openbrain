@@ -36,10 +36,7 @@ LMSTUDIO_BASE_URL = os.getenv(
 )
 
 # Obsidian
-OBSIDIAN_VAULT_PATH = os.getenv(
-    "OBSIDIAN_VAULT",
-    os.path.expanduser("~/Library/Mobile Documents/iCloud~md~obsidian/Documents/MyVault")
-)
+OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT", "")
 OBSIDIAN_SUMMARY_DIR = os.path.join(OBSIDIAN_VAULT_PATH, "BuddyChat")
 OBSIDIAN_TEMPLATE = Path(os.getenv("OBSIDIAN_TEMPLATE", ""))
 SUMMARY_INTERVAL_HOURS = int(os.getenv("SUMMARY_INTERVAL_HOURS", "2"))
