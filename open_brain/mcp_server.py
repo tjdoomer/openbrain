@@ -34,6 +34,7 @@ project_root = str(Path(__file__).parent.parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+from open_brain.config import OBSIDIAN_VAULT_PATH
 from open_brain.database import KnowledgeBase
 from open_brain.embeddings import EmbeddingService
 
@@ -119,6 +120,38 @@ async def list_tools() -> list[types.Tool]:
             }
         ),
         types.Tool(
+            name="brain_upsert",
+            description=(
+                "Create or update an Obsidian note in Open Brain. "
+                "Use this to write daily notes, capture meeting notes, "
+                "or save any structured knowledge. The note is stored in "
+                "the brain database, embedded for semantic search, and "
+                "synced to the Obsidian vault."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": (
+                            "Path within the vault, e.g. 'Daily/2026-03-05.md' "
+                            "or 'Meeting Notes/standup.md'"
+                        )
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full markdown content of the note"
+                    },
+                    "folder": {
+                        "type": "string",
+                        "default": "",
+                        "description": "Folder tag for organization, e.g. 'Daily'"
+                    }
+                },
+                "required": ["file_path", "content"]
+            }
+        ),
+        types.Tool(
             name="brain_context",
             description=(
                 "Get conversation context around a specific topic or message. "
@@ -159,6 +192,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             return await _search_memory(arguments)
         elif name == "brain_recent":
             return await _get_recent(arguments)
+        elif name == "brain_upsert":
+            return await _upsert_note(arguments)
         elif name == "brain_context":
             return await _get_context(arguments)
         else:
@@ -272,6 +307,69 @@ async def _get_context(args: dict) -> list[types.TextContent]:
         lines.append(f"{marker}[{ts}] {msg['sender_name']}: {msg['content'][:200]}")
 
     return [types.TextContent(type="text", text="\n".join(lines))]
+
+
+async def _upsert_note(args: dict) -> list[types.TextContent]:
+    file_path = args.get("file_path", "")
+    content = args.get("content", "")
+    folder = args.get("folder", "")
+
+    if not file_path or not content:
+        return [types.TextContent(
+            type="text", text="Error: 'file_path' and 'content' are required"
+        )]
+
+    kb = _get_kb()
+    embed = _get_embed()
+
+    msg_id = await kb.upsert_note({
+        "file_path": file_path,
+        "folder": folder,
+        "content": content,
+        "file_modified": None,
+    })
+
+    # Write to Obsidian vault if configured
+    vault_written = False
+    if OBSIDIAN_VAULT_PATH:
+        try:
+            vault_file = Path(OBSIDIAN_VAULT_PATH) / file_path
+            vault_file.parent.mkdir(parents=True, exist_ok=True)
+            vault_file.write_text(content, encoding="utf-8")
+            vault_written = True
+            logger.info("Wrote note to vault: %s", vault_file)
+        except Exception as e:
+            logger.error("Failed to write note to vault: %s", e)
+
+    # Re-embed the note
+    await kb.delete_embeddings_for_message(msg_id)
+    chunks = await embed.chunk_content(content, max_length=500)
+    embedded_count = 0
+    for i, chunk in enumerate(chunks):
+        embedding = await embed.generate_embedding(chunk)
+        if embedding:
+            await kb.store_embedding(
+                message_id=msg_id,
+                content=chunk,
+                embedding=embedding,
+                metadata={
+                    "source": "obsidian",
+                    "file_path": file_path,
+                    "folder": folder,
+                    "chunk_index": i,
+                    "total_chunks": len(chunks),
+                }
+            )
+            embedded_count += 1
+
+    return [types.TextContent(
+        type="text",
+        text=(
+            f"Note upserted: {file_path}\n"
+            f"Chunks: {len(chunks)}, Embedded: {embedded_count}, "
+            f"Vault written: {vault_written}"
+        )
+    )]
 
 
 # --- Entry ---

@@ -10,6 +10,10 @@ venv/
 # Environment
 .env
 
+# Runtime data / build artifacts
+data/
+launcher/
+
 # OS
 .DS_Store
 

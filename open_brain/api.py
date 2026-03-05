@@ -7,6 +7,7 @@ Obsidian sync, and health endpoints.
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -14,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from open_brain.config import EMBEDDING_API_URL, BRAIN_HOST, BRAIN_PORT
+from open_brain.config import EMBEDDING_API_URL, BRAIN_HOST, BRAIN_PORT, OBSIDIAN_VAULT_PATH
 from open_brain.database import KnowledgeBase
 from open_brain.embeddings import EmbeddingService
 
@@ -216,7 +217,7 @@ async def context(
 
 @app.post("/api/notes/upsert")
 async def upsert_note(body: NoteUpsertRequest):
-    """Upsert an Obsidian note into the brain database."""
+    """Upsert an Obsidian note into the brain database and write to vault."""
     kb = get_kb()
     embed = get_embed()
 
@@ -226,6 +227,17 @@ async def upsert_note(body: NoteUpsertRequest):
         "content": body.content,
         "file_modified": body.file_modified,
     })
+
+    # Write .md file to Obsidian vault if configured
+    vault_written = False
+    if OBSIDIAN_VAULT_PATH:
+        try:
+            vault_file = Path(OBSIDIAN_VAULT_PATH) / body.file_path
+            await asyncio.to_thread(_write_vault_file, vault_file, body.content)
+            vault_written = True
+            logger.info("Wrote note to vault: %s", vault_file)
+        except Exception as e:
+            logger.error("Failed to write note to vault: %s", e)
 
     # Re-embed the note
     await kb.delete_embeddings_for_message(msg_id)
@@ -248,7 +260,18 @@ async def upsert_note(body: NoteUpsertRequest):
             )
             embedded_count += 1
 
-    return {"message_id": msg_id, "chunks": len(chunks), "embedded": embedded_count}
+    return {
+        "message_id": msg_id,
+        "chunks": len(chunks),
+        "embedded": embedded_count,
+        "vault_written": vault_written,
+    }
+
+
+def _write_vault_file(path: Path, content: str) -> None:
+    """Write content to a file in the Obsidian vault, creating dirs as needed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
 
 
 @app.post("/api/obsidian/sync")
