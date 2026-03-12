@@ -20,7 +20,8 @@ except ImportError:
 from open_brain.config import (
     DATABASE_URL, USE_POSTGRES,
     PGVECTOR_HOST, PGVECTOR_PORT, PGVECTOR_DB,
-    PGVECTOR_USER, PGVECTOR_PASSWORD
+    PGVECTOR_USER, PGVECTOR_PASSWORD,
+    EMBEDDING_DIM,
 )
 
 logger = logging.getLogger("open_brain.db")
@@ -29,7 +30,6 @@ logger = logging.getLogger("open_brain.db")
 if USE_POSTGRES:
     from sqlalchemy.dialects.postgresql import JSONB as JSONType
     from pgvector.sqlalchemy import Vector
-    EMBEDDING_DIM = 768  # Qwen3-Embedding-0.6B
     EmbeddingColumn = Vector(EMBEDDING_DIM)
 else:
     JSONType = JSON
@@ -87,10 +87,40 @@ class KnowledgeBase:
 
         Base.metadata.create_all(self.engine)
 
+        # Migrate embedding column dimension if needed (e.g. 768 → 1024)
+        with self.engine.connect() as conn:
+            try:
+                row = conn.execute(text(
+                    "SELECT atttypmod FROM pg_attribute "
+                    "WHERE attrelid = 'embeddings'::regclass "
+                    "AND attname = 'embedding'"
+                )).fetchone()
+                if row and row[0] > 0:
+                    current_dim = row[0]
+                    if current_dim != EMBEDDING_DIM:
+                        logger.warning(
+                            "Embedding dimension mismatch: column=%d, config=%d — migrating",
+                            current_dim, EMBEDDING_DIM,
+                        )
+                        conn.execute(text("DROP INDEX IF EXISTS ix_embeddings_vector"))
+                        # Must truncate first — can't cast vectors to a different dimension
+                        conn.execute(text("TRUNCATE embeddings"))
+                        conn.execute(text(
+                            f"ALTER TABLE embeddings ALTER COLUMN embedding "
+                            f"TYPE vector({EMBEDDING_DIM})"
+                        ))
+                        conn.commit()
+                        logger.info(
+                            "Migrated embedding column to vector(%d) "
+                            "(truncated — re-embed required)", EMBEDDING_DIM
+                        )
+            except Exception as e:
+                logger.warning("Could not check/migrate embedding dimension: %s", e)
+
         # Create vector similarity index (IVFFlat) if it doesn't exist
         with self.engine.connect() as conn:
             try:
-                conn.execute(text("""
+                conn.execute(text(f"""
                     CREATE INDEX IF NOT EXISTS ix_embeddings_vector
                     ON embeddings USING ivfflat (embedding vector_cosine_ops)
                     WITH (lists = 100)

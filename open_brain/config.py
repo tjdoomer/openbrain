@@ -25,15 +25,13 @@ PGVECTOR_DB = os.getenv("PGVECTOR_DB", "braindb")
 PGVECTOR_USER = os.getenv("PGVECTOR_USER", "brainuser")
 PGVECTOR_PASSWORD = os.getenv("PGVECTOR_PASSWORD", "")
 
-# Embeddings (LM Studio / OpenAI-compatible server)
-EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "http://localhost:1234/v1/embeddings")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "qwen3-embedding-0.6b-mxfp8")
-
-# LM Studio base URL (derived from EMBEDDING_API_URL, or override directly)
-LMSTUDIO_BASE_URL = os.getenv(
-    "LMSTUDIO_BASE_URL",
-    EMBEDDING_API_URL.rsplit("/v1/", 1)[0] if "/v1/" in EMBEDDING_API_URL else "http://localhost:1234"
-)
+# Embeddings (local MLX model — Qwen3-Embedding-0.6B)
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "qwen3-embedding-0.6b")
+EMBEDDING_MODEL_PATH = Path(os.getenv(
+    "EMBEDDING_MODEL_PATH",
+    str(Path(__file__).parent.parent / "models" / "qwen3-embedding-0.6b"),
+))
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))
 
 # Obsidian
 OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT", "")

@@ -71,9 +71,24 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="brain_search",
             description=(
-                "Search the agent's memory using semantic similarity. "
-                "Use this to find past conversations, decisions, or information "
-                "without relying on context window limits."
+                "Search the agent's persistent memory using semantic similarity. "
+                "Use this to find past conversations, decisions, knowledge notes, "
+                "or information without relying on context window limits.\n\n"
+                "HOW SEARCH WORKS:\n"
+                "- Content is stored as ~500-char chunks with 1024-dim embeddings\n"
+                "- Results return matching chunks (not full documents), each with "
+                "a similarity score, content preview (300 chars), and metadata\n"
+                "- Metadata includes file_path (for Obsidian notes), chunk_index, "
+                "and total_chunks — use these to understand if you're seeing part "
+                "of a larger document\n"
+                "- Results with similarity > 50% are returned, ranked highest first\n\n"
+                "TIPS:\n"
+                "- Use natural language queries — the model understands semantics\n"
+                "- If a result shows chunk_index: 2 of total_chunks: 5, there's more "
+                "content in that document — search again with different terms to find "
+                "other chunks, or use brain_context with the message_id\n"
+                "- For Obsidian notes, the file_path in metadata tells you the full "
+                "document path (e.g. 'Engineering/my-notes.md')"
             ),
             inputSchema={
                 "type": "object",
@@ -97,7 +112,9 @@ async def list_tools() -> list[types.Tool]:
             name="brain_recent",
             description=(
                 "Fetch recent messages from a chat room. "
-                "Use this to get the latest context without semantic search."
+                "Use this to get the latest context without semantic search. "
+                "Returns full message content (up to 200 chars preview), sender info, "
+                "timestamps, and metadata. Messages are ordered chronologically."
             ),
             inputSchema={
                 "type": "object",
@@ -126,7 +143,34 @@ async def list_tools() -> list[types.Tool]:
                 "Use this to write daily notes, capture meeting notes, "
                 "or save any structured knowledge. The note is stored in "
                 "the brain database, embedded for semantic search, and "
-                "synced to the Obsidian vault."
+                "synced to the Obsidian vault.\n\n"
+                "CONTENT LIMITS & CHUNKING:\n"
+                "- Content is split into ~500-char chunks for embedding\n"
+                "- Each chunk is embedded independently (1024-dim vector)\n"
+                "- There is NO hard size limit — large notes just produce more "
+                "chunks and take longer to embed\n"
+                "- However, very large notes (>5000 chars) are slower to upsert "
+                "because each chunk is embedded sequentially\n\n"
+                "STRATEGY FOR LARGE CONTENT:\n"
+                "- For content that exceeds ~3000 chars, split it across multiple "
+                "notes using a pagination convention:\n"
+                "  'Topic/my-topic-part-1.md', 'Topic/my-topic-part-2.md', etc.\n"
+                "- Each part should be self-contained with its own title and context "
+                "so chunks are meaningful when found via search\n"
+                "- Add cross-references: 'See also: my-topic-part-2.md' at the end\n"
+                "- Prefer multiple focused notes over one giant note — smaller notes "
+                "produce higher-quality search results\n\n"
+                "UPDATING EXISTING NOTES:\n"
+                "- Upsert replaces the entire note content and re-embeds all chunks\n"
+                "- IMPORTANT: If updating a note, always read the current content "
+                "from the vault first to avoid losing existing information. Do NOT "
+                "rely on search results (which are 300-char chunk previews)\n\n"
+                "BEST PRACTICES:\n"
+                "- Use clear headings and structure — chunks split on line boundaries, "
+                "so well-structured markdown produces better chunks\n"
+                "- Include relevant keywords naturally — they improve search recall\n"
+                "- Use the folder parameter to match the file_path prefix for organization\n"
+                "- Tag notes with #hashtags in the content for categorical search"
             ),
             inputSchema={
                 "type": "object",
@@ -135,17 +179,22 @@ async def list_tools() -> list[types.Tool]:
                         "type": "string",
                         "description": (
                             "Path within the vault, e.g. 'Daily/2026-03-05.md' "
-                            "or 'Meeting Notes/standup.md'"
+                            "or 'Meeting Notes/standup.md'. For multi-part notes, "
+                            "use 'Topic/name-part-1.md', 'Topic/name-part-2.md', etc."
                         )
                     },
                     "content": {
                         "type": "string",
-                        "description": "Full markdown content of the note"
+                        "description": (
+                            "Full markdown content of the note. Aim for ~1000-3000 chars "
+                            "per note for optimal search quality. If content exceeds this, "
+                            "split across multiple notes with cross-references."
+                        )
                     },
                     "folder": {
                         "type": "string",
                         "default": "",
-                        "description": "Folder tag for organization, e.g. 'Daily'"
+                        "description": "Folder tag for organization, e.g. 'Daily', 'Engineering', 'Meeting Notes'"
                     }
                 },
                 "required": ["file_path", "content"]
@@ -155,7 +204,9 @@ async def list_tools() -> list[types.Tool]:
             name="brain_context",
             description=(
                 "Get conversation context around a specific topic or message. "
-                "Returns the original message plus surrounding context."
+                "Returns the anchor message plus surrounding messages from the same room. "
+                "Useful for understanding the full conversation around a search result. "
+                "If you get a brain_search hit and want more context, pass its message_id here."
             ),
             inputSchema={
                 "type": "object",
@@ -211,7 +262,7 @@ async def _search_memory(args: dict) -> list[types.TextContent]:
         return [types.TextContent(type="text", text="Error: 'query' parameter is required")]
 
     embed = _get_embed()
-    embedding = await embed.generate_embedding(query)
+    embedding = await embed.generate_embedding(query, is_query=True)
 
     if not embedding:
         return [types.TextContent(
@@ -273,7 +324,7 @@ async def _get_context(args: dict) -> list[types.TextContent]:
             return [types.TextContent(type="text", text=f"Message {message_id} not found")]
         room = anchor["room"]
     else:
-        embedding = await embed.generate_embedding(topic)
+        embedding = await embed.generate_embedding(topic, is_query=True)
         if not embedding:
             return [types.TextContent(type="text", text="Could not generate embedding")]
         results = await kb.semantic_search(topic, embedding, 1)

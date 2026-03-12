@@ -10,12 +10,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from open_brain.config import EMBEDDING_API_URL, BRAIN_HOST, BRAIN_PORT, OBSIDIAN_VAULT_PATH
+from open_brain.config import BRAIN_HOST, BRAIN_PORT, OBSIDIAN_VAULT_PATH
 from open_brain.database import KnowledgeBase
 from open_brain.embeddings import EmbeddingService
 
@@ -97,12 +96,11 @@ async def health():
     except Exception as e:
         status["database"] = f"error: {e}"
 
-    # Check embedding server
+    # Check local MLX embedding model
     try:
-        async with httpx.AsyncClient(timeout=3) as client:
-            resp = await client.get(f"{EMBEDDING_API_URL.rsplit('/v1/', 1)[0]}/v1/models")
-            resp.raise_for_status()
-            status["embeddings"] = "ok"
+        from open_brain.embeddings import _get_model
+        _get_model()
+        status["embeddings"] = "ok (mlx-qwen3)"
     except Exception as e:
         status["embeddings"] = f"unavailable: {e}"
 
@@ -179,7 +177,7 @@ async def context(
             raise HTTPException(404, f"Message {message_id} not found")
         room = anchor["room"]
     else:
-        embedding = await embed.generate_embedding(topic)
+        embedding = await embed.generate_embedding(topic, is_query=True)
         if not embedding:
             raise HTTPException(503, "Could not generate embedding")
         results = await kb.semantic_search(topic, embedding, 1)
