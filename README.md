@@ -4,7 +4,7 @@
 
 # Open Brain
 
-Standalone knowledge infrastructure for AI agents. PGVector semantic search, local embeddings, and Obsidian vault sync — accessible via REST API or MCP.
+Standalone knowledge infrastructure for AI agents. PGVector semantic search, local MLX embeddings (Apple Silicon), and Obsidian vault sync — accessible via REST API or MCP.
 
 Any agent (Claude, LM Studio, custom scripts) can capture memories and search across chat history and notes.
 
@@ -22,7 +22,19 @@ cp .env.example .env
 pip install -r requirements.txt
 ```
 
-### 2. Start PGVector
+### 2. Download the embedding model
+
+Download [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) (MLX format) into the `models/` directory:
+
+```bash
+# Using huggingface-cli
+huggingface-cli download Qwen/Qwen3-Embedding-0.6B --local-dir models/qwen3-embedding-0.6b
+
+# Or set a custom path via env var
+export EMBEDDING_MODEL_PATH=/path/to/your/model
+```
+
+### 3. Start PGVector
 
 ```bash
 docker compose up -d
@@ -30,19 +42,13 @@ docker compose up -d
 
 This starts PostgreSQL with the pgvector extension on port 5432.
 
-### 3. Load the embedding model
-
-Open LM Studio and load the embedding model:
-
-```bash
-lms load qwen3-embedding-0.6b-mxfp8
-```
-
 ### 4. Start Open Brain
 
 ```bash
 python -m uvicorn open_brain.api:app --host 0.0.0.0 --port 8766
 ```
+
+The MLX embedding model loads lazily on first request.
 
 ### 5. Test it
 
@@ -63,11 +69,12 @@ curl "http://localhost:8766/api/search?q=hello&limit=5"
 | Feature | Description |
 |---------|-------------|
 | **Semantic Search** | PGVector cosine similarity across all captured content |
-| **Local Embeddings** | Qwen3-Embedding via LM Studio — no external APIs |
+| **Local MLX Embeddings** | Qwen3-Embedding-0.6B running natively on Apple Silicon — no external services |
+| **Asymmetric Retrieval** | Query vs document instruction prefixes for better search quality |
 | **Obsidian Sync** | Import vault notes, export daily summaries |
 | **REST API** | Capture, search, recent, context, notes upsert |
-| **MCP Server** | `brain_search`, `brain_recent`, `brain_context` tools |
-| **Auto-chunking** | Long content split into overlapping chunks for better recall |
+| **MCP Server** | `brain_search`, `brain_recent`, `brain_upsert`, `brain_context` tools |
+| **Auto-chunking** | Long content split into ~500-char chunks for better recall |
 | **Source Tracking** | Each memory tagged with source, sender, room metadata |
 
 ---
@@ -169,7 +176,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "open-brain": {
       "command": "python",
-      "args": ["/Users/you/open-brain/open_brain/mcp_server.py"]
+      "args": ["/path/to/open-brain/open_brain/mcp_server.py"]
     }
   }
 }
@@ -181,7 +188,8 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 |------|-------------|
 | `brain_search` | Semantic search over all memories and notes |
 | `brain_recent` | Fetch recent messages from a room |
-| `brain_context` | Get conversation context around a topic |
+| `brain_upsert` | Create or update an Obsidian note (embedded + vault-synced) |
+| `brain_context` | Get conversation context around a topic or message |
 
 ---
 
@@ -220,6 +228,20 @@ Set `BRAIN_URL=http://localhost:8766` in BuddyChat's `.env`.
 
 ---
 
+## Utilities
+
+### Re-embed all content
+
+After switching embedding models, re-generate all vectors to ensure consistency:
+
+```bash
+python scripts/reembed.py
+```
+
+Processes all rows in batches of 50. The database auto-migrates the vector column dimension on startup if it detects a mismatch.
+
+---
+
 ## Project Structure
 
 ```
@@ -227,13 +249,15 @@ open-brain/
 ├── docker-compose.yml         # PGVector container
 ├── requirements.txt
 ├── .env.example
+├── scripts/
+│   └── reembed.py             # Batch re-embedding utility
 └── open_brain/
     ├── __init__.py
     ├── api.py                 # FastAPI REST API
     ├── config.py              # Configuration (env vars)
     ├── database.py            # PGVector ORM + embedding storage
-    ├── embeddings.py          # LM Studio embedding client
-    ├── mcp_server.py          # MCP stdio server (3 tools)
+    ├── embeddings.py          # Local MLX embedding service
+    ├── mcp_server.py          # MCP stdio server (4 tools)
     └── obsidian.py            # Vault import + summary export
 ```
 
@@ -251,8 +275,9 @@ open-brain/
 | `PGVECTOR_DB` | `braindb` | Database name |
 | `PGVECTOR_USER` | `brainuser` | Database user |
 | `PGVECTOR_PASSWORD` | _(empty)_ | Database password |
-| `EMBEDDING_API_URL` | `http://localhost:1234/v1/embeddings` | Embedding endpoint |
-| `EMBEDDING_MODEL` | `qwen3-embedding-0.6b-mxfp8` | Embedding model ID |
+| `EMBEDDING_MODEL` | `qwen3-embedding-0.6b` | Embedding model name |
+| `EMBEDDING_MODEL_PATH` | `./models/qwen3-embedding-0.6b` | Path to MLX model weights |
+| `EMBEDDING_DIM` | `1024` | Embedding vector dimension |
 | `OBSIDIAN_VAULT` | _(empty)_ | Path to Obsidian vault |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
@@ -265,10 +290,10 @@ open-brain/
 │ BuddyChat   │────▶│  Open Brain  │────▶│  PGVector   │
 │ Claude Code  │     │  (FastAPI)   │     │ (Postgres)  │
 │ Any Agent    │◀────│              │     └─────────────┘
-└─────────────┘     │  Embeddings  │
+└─────────────┘     │  MLX Embed   │
        REST/MCP     │  + Search    │     ┌─────────────┐
-                    │              │────▶│  LM Studio  │
-                    │  Obsidian    │     │ (embeddings)│
+                    │              │────▶│  Qwen3-0.6B │
+                    │  Obsidian    │     │ (local MLX) │
                     │  Sync        │     └─────────────┘
                     └──────────────┘
                            │
