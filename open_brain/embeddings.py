@@ -151,6 +151,29 @@ class EmbeddingService:
 
         return await self.kb.semantic_search(query, query_embedding, limit)
 
+    async def embed_task(self, task_id: str, summary: str, description: str = "") -> int:
+        """Embed a task's summary + description for semantic search."""
+        text = f"{summary}\n\n{description}" if description else summary
+        await self.kb.delete_embeddings_for_message(task_id)
+        chunks = await self.chunk_content(text, max_length=500)
+        count = 0
+        for i, chunk in enumerate(chunks):
+            embedding = await self.generate_embedding(chunk)
+            if embedding:
+                await self.kb.store_embedding(
+                    message_id=task_id,
+                    content=chunk,
+                    embedding=embedding,
+                    metadata={
+                        "source": "task",
+                        "task_id": task_id,
+                        "chunk_index": i,
+                        "total_chunks": len(chunks),
+                    }
+                )
+                count += 1
+        return count
+
     async def get_embeddings_for_message(self, msg_id: str) -> list[dict]:
         """Get all embeddings for a specific message."""
         return await self.kb.get_embeddings_by_message(msg_id)

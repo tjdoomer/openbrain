@@ -201,6 +201,121 @@ async def list_tools() -> list[types.Tool]:
             }
         ),
         types.Tool(
+            name="brain_task_create",
+            description=(
+                "Create a new persistent task in Open Brain. "
+                "Tasks survive across sessions and are searchable via brain_search. "
+                "Use this for tracking work items, TODOs, follow-ups, and action items "
+                "that outlive a single conversation.\n\n"
+                "Returns the task with its short ID (e.g. TASK-1) for easy reference."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "Brief task title (max 500 chars)"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Detailed description, acceptance criteria, context"
+                    },
+                    "priority": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                        "description": "Task priority"
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Project name (e.g. 'buddychat', 'qsic-data', 'chronos')"
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Tags for categorization"
+                    }
+                },
+                "required": ["summary"]
+            }
+        ),
+        types.Tool(
+            name="brain_task_list",
+            description=(
+                "List tasks from Open Brain. "
+                "By default shows active tasks (open, in_progress, blocked). "
+                "Use status='all' to see everything including done tasks, "
+                "or filter by specific status or project."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["open", "in_progress", "done", "blocked", "all"],
+                        "description": "Filter by status. Default: active (non-done) tasks"
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Filter by project name"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 20,
+                        "minimum": 1,
+                        "maximum": 100,
+                        "description": "Maximum tasks to return"
+                    }
+                },
+                "required": []
+            }
+        ),
+        types.Tool(
+            name="brain_task_update",
+            description=(
+                "Update an existing task in Open Brain. "
+                "Identify the task by short ID (e.g. 'TASK-1') or UUID. "
+                "Only provide fields you want to change. "
+                "If summary or description changes, the task is re-embedded for search."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Task short ID (TASK-1) or UUID"
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "New task summary"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "New detailed description"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["open", "in_progress", "done", "blocked"],
+                        "description": "New status"
+                    },
+                    "priority": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                        "description": "New priority"
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "New project name"
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "New tags (replaces existing)"
+                    }
+                },
+                "required": ["id"]
+            }
+        ),
+        types.Tool(
             name="brain_context",
             description=(
                 "Get conversation context around a specific topic or message. "
@@ -245,6 +360,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             return await _get_recent(arguments)
         elif name == "brain_upsert":
             return await _upsert_note(arguments)
+        elif name == "brain_task_create":
+            return await _task_create(arguments)
+        elif name == "brain_task_list":
+            return await _task_list(arguments)
+        elif name == "brain_task_update":
+            return await _task_update(arguments)
         elif name == "brain_context":
             return await _get_context(arguments)
         else:
@@ -421,6 +542,95 @@ async def _upsert_note(args: dict) -> list[types.TextContent]:
             f"Vault written: {vault_written}"
         )
     )]
+
+
+async def _task_create(args: dict) -> list[types.TextContent]:
+    summary = args.get("summary", "")
+    if not summary:
+        return [types.TextContent(type="text", text="Error: 'summary' is required")]
+
+    kb = _get_kb()
+    embed = _get_embed()
+
+    task_data = {"summary": summary}
+    for field in ("description", "priority", "project", "tags"):
+        if args.get(field):
+            task_data[field] = args[field]
+
+    task = await kb.create_task(task_data)
+    embedded = await embed.embed_task(
+        task["id"], task["summary"], task.get("description") or ""
+    )
+
+    lines = [
+        f"Task created: {task['short_id']}",
+        f"Summary: {task['summary']}",
+    ]
+    if task.get("project"):
+        lines.append(f"Project: {task['project']}")
+    if task.get("priority"):
+        lines.append(f"Priority: {task['priority']}")
+    if task.get("tags"):
+        lines.append(f"Tags: {', '.join(task['tags'])}")
+    lines.append(f"Status: {task['status']}")
+    lines.append(f"Embedded: {embedded} chunks")
+
+    return [types.TextContent(type="text", text="\n".join(lines))]
+
+
+async def _task_list(args: dict) -> list[types.TextContent]:
+    kb = _get_kb()
+    status = args.get("status")
+    project = args.get("project")
+    limit = args.get("limit", 20)
+
+    tasks = await kb.list_tasks(status=status, project=project, limit=limit)
+
+    if not tasks:
+        label = status or "active"
+        return [types.TextContent(type="text", text=f"No {label} tasks found.")]
+
+    lines = [f"-- Tasks ({len(tasks)}) --", ""]
+    for t in tasks:
+        priority_tag = f" [{t['priority']}]" if t.get("priority") else ""
+        project_tag = f" ({t['project']})" if t.get("project") else ""
+        lines.append(f"{t['short_id']}  {t['status']:<12}{priority_tag}{project_tag}  {t['summary']}")
+
+    return [types.TextContent(type="text", text="\n".join(lines))]
+
+
+async def _task_update(args: dict) -> list[types.TextContent]:
+    identifier = args.get("id", "")
+    if not identifier:
+        return [types.TextContent(type="text", text="Error: 'id' is required")]
+
+    kb = _get_kb()
+    embed = _get_embed()
+
+    updates = {k: v for k, v in args.items() if k != "id" and v is not None}
+    if not updates:
+        return [types.TextContent(type="text", text="Error: no fields to update")]
+
+    task = await kb.update_task(identifier, updates)
+    if not task:
+        return [types.TextContent(type="text", text=f"Task {identifier} not found")]
+
+    if "summary" in updates or "description" in updates:
+        await embed.embed_task(
+            task["id"], task["summary"], task.get("description") or ""
+        )
+
+    lines = [
+        f"Task updated: {task['short_id']}",
+        f"Summary: {task['summary']}",
+        f"Status: {task['status']}",
+    ]
+    if task.get("project"):
+        lines.append(f"Project: {task['project']}")
+    if task.get("priority"):
+        lines.append(f"Priority: {task['priority']}")
+
+    return [types.TextContent(type="text", text="\n".join(lines))]
 
 
 # --- Entry ---

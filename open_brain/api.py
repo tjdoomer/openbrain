@@ -81,6 +81,26 @@ class NoteUpsertRequest(BaseModel):
     file_modified: Optional[float] = None
 
 
+class TaskCreateRequest(BaseModel):
+    summary: str
+    description: Optional[str] = None
+    status: str = "open"
+    priority: Optional[str] = None
+    project: Optional[str] = None
+    tags: Optional[list[str]] = None
+    metadata: Optional[dict] = None
+
+
+class TaskUpdateRequest(BaseModel):
+    summary: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    project: Optional[str] = None
+    tags: Optional[list[str]] = None
+    metadata: Optional[dict] = None
+
+
 # --- Health ---
 
 @app.get("/health")
@@ -270,6 +290,77 @@ def _write_vault_file(path: Path, content: str) -> None:
     """Write content to a file in the Obsidian vault, creating dirs as needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+# --- Tasks ---
+
+@app.post("/api/tasks")
+async def create_task(body: TaskCreateRequest):
+    """Create a new task, embed it for semantic search."""
+    kb = get_kb()
+    embed = get_embed()
+
+    task = await kb.create_task(body.model_dump(exclude_none=True))
+
+    embedded = await embed.embed_task(
+        task["id"], task["summary"], task.get("description") or ""
+    )
+    task["embedded_chunks"] = embedded
+    return task
+
+
+@app.get("/api/tasks")
+async def list_tasks(
+    status: Optional[str] = Query(None, description="Filter: open|in_progress|done|blocked|all"),
+    project: Optional[str] = Query(None, description="Filter by project"),
+    limit: int = Query(50, ge=1, le=200, description="Max results"),
+):
+    """List tasks. Default: active (non-done) tasks."""
+    kb = get_kb()
+    return await kb.list_tasks(status=status, project=project, limit=limit)
+
+
+@app.get("/api/tasks/{task_id}")
+async def get_task(task_id: str):
+    """Get a task by short_id (TASK-1) or UUID."""
+    kb = get_kb()
+    task = await kb.get_task(task_id)
+    if not task:
+        raise HTTPException(404, f"Task {task_id} not found")
+    return task
+
+
+@app.patch("/api/tasks/{task_id}")
+async def update_task(task_id: str, body: TaskUpdateRequest):
+    """Partial update a task. Re-embeds if summary or description changed."""
+    kb = get_kb()
+    embed = get_embed()
+
+    updates = body.model_dump(exclude_none=True)
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+
+    task = await kb.update_task(task_id, updates)
+    if not task:
+        raise HTTPException(404, f"Task {task_id} not found")
+
+    if "summary" in updates or "description" in updates:
+        embedded = await embed.embed_task(
+            task["id"], task["summary"], task.get("description") or ""
+        )
+        task["embedded_chunks"] = embedded
+
+    return task
+
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_task(task_id: str):
+    """Delete a task and its embeddings."""
+    kb = get_kb()
+    deleted = await kb.delete_task(task_id)
+    if not deleted:
+        raise HTTPException(404, f"Task {task_id} not found")
+    return {"deleted": True, "task_id": task_id}
 
 
 @app.post("/api/obsidian/sync")

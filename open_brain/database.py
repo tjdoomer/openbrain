@@ -64,6 +64,23 @@ class Embedding(Base):
     created_at = Column(DateTime, nullable=False)
 
 
+class Task(Base):
+    """Persistent task with lifecycle tracking"""
+    __tablename__ = "tasks"
+
+    id = Column(String(36), primary_key=True)
+    short_id = Column(String(20), unique=True, nullable=False, index=True)
+    summary = Column(String(500), nullable=False)
+    description = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="open", index=True)
+    priority = Column(String(10), nullable=True)
+    project = Column(String(100), nullable=True, index=True)
+    tags = Column(JSONType, nullable=True)
+    meta = Column("metadata", JSONType, nullable=True)
+    created_at = Column(DateTime, nullable=False, index=True)
+    updated_at = Column(DateTime, nullable=True)
+
+
 class KnowledgeBase:
     """Manages both message storage and vector embeddings"""
 
@@ -86,6 +103,14 @@ class KnowledgeBase:
                 logger.warning("Could not enable vector extension: %s", e)
 
         Base.metadata.create_all(self.engine)
+
+        # Create task sequence for short IDs
+        with self.engine.connect() as conn:
+            try:
+                conn.execute(text("CREATE SEQUENCE IF NOT EXISTS task_seq START 1"))
+                conn.commit()
+            except Exception as e:
+                logger.warning("Could not create task_seq: %s", e)
 
         # Migrate embedding column dimension if needed (e.g. 768 → 1024)
         with self.engine.connect() as conn:
@@ -181,6 +206,24 @@ class KnowledgeBase:
     async def delete_embeddings_for_message(self, msg_id: str):
         """Delete all embeddings for a message (for re-embedding)."""
         return await asyncio.to_thread(self._delete_embeddings_for_message_sync, msg_id)
+
+    # --- Task async wrappers ---
+
+    async def create_task(self, task_data: dict) -> dict:
+        return await asyncio.to_thread(self._create_task_sync, task_data)
+
+    async def get_task(self, identifier: str) -> Optional[dict]:
+        return await asyncio.to_thread(self._get_task_sync, identifier)
+
+    async def list_tasks(self, status: Optional[str] = None,
+                         project: Optional[str] = None, limit: int = 50) -> list[dict]:
+        return await asyncio.to_thread(self._list_tasks_sync, status, project, limit)
+
+    async def update_task(self, identifier: str, updates: dict) -> Optional[dict]:
+        return await asyncio.to_thread(self._update_task_sync, identifier, updates)
+
+    async def delete_task(self, identifier: str) -> bool:
+        return await asyncio.to_thread(self._delete_task_sync, identifier)
 
     # --- Sync implementations ---
 
@@ -418,6 +461,132 @@ class KnowledgeBase:
         try:
             session.query(Embedding).filter_by(message_id=msg_id).delete()
             session.commit()
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
+
+    # --- Task sync implementations ---
+
+    def _task_to_dict(self, task: Task) -> dict:
+        return {
+            "id": task.id,
+            "short_id": task.short_id,
+            "summary": task.summary,
+            "description": task.description,
+            "status": task.status,
+            "priority": task.priority,
+            "project": task.project,
+            "tags": task.tags,
+            "metadata": task.meta,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+        }
+
+    def _next_short_id(self, session) -> str:
+        if USE_POSTGRES:
+            row = session.execute(text("SELECT nextval('task_seq')")).fetchone()
+            return f"TASK-{row[0]}"
+        else:
+            row = session.execute(
+                text("SELECT MAX(CAST(REPLACE(short_id, 'TASK-', '') AS INTEGER)) FROM tasks")
+            ).fetchone()
+            next_num = (row[0] or 0) + 1
+            return f"TASK-{next_num}"
+
+    def _resolve_task(self, session, identifier: str) -> Optional[Task]:
+        """Look up a task by short_id (if starts with TASK-) or UUID."""
+        if identifier.upper().startswith("TASK-"):
+            return session.query(Task).filter_by(short_id=identifier.upper()).first()
+        return session.query(Task).filter_by(id=identifier).first()
+
+    def _create_task_sync(self, task_data: dict) -> dict:
+        session = self.get_session()
+        try:
+            task_id = str(uuid4())
+            short_id = self._next_short_id(session)
+            now = datetime.now(timezone.utc)
+            task = Task(
+                id=task_id,
+                short_id=short_id,
+                summary=task_data["summary"],
+                description=task_data.get("description"),
+                status=task_data.get("status", "open"),
+                priority=task_data.get("priority"),
+                project=task_data.get("project"),
+                tags=task_data.get("tags"),
+                meta=task_data.get("metadata"),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(task)
+            session.commit()
+            session.refresh(task)
+            return self._task_to_dict(task)
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
+
+    def _get_task_sync(self, identifier: str) -> Optional[dict]:
+        session = self.get_session()
+        try:
+            task = self._resolve_task(session, identifier)
+            return self._task_to_dict(task) if task else None
+        finally:
+            session.close()
+
+    def _list_tasks_sync(self, status: Optional[str] = None,
+                         project: Optional[str] = None, limit: int = 50) -> list[dict]:
+        session = self.get_session()
+        try:
+            query = session.query(Task)
+            if status and status != "all":
+                query = query.filter_by(status=status)
+            elif not status:
+                # Default: non-done tasks
+                query = query.filter(Task.status.in_(["open", "in_progress", "blocked"]))
+            if project:
+                query = query.filter_by(project=project)
+            tasks = query.order_by(Task.created_at.desc()).limit(limit).all()
+            return [self._task_to_dict(t) for t in tasks]
+        finally:
+            session.close()
+
+    def _update_task_sync(self, identifier: str, updates: dict) -> Optional[dict]:
+        session = self.get_session()
+        try:
+            task = self._resolve_task(session, identifier)
+            if not task:
+                return None
+            allowed = {"summary", "description", "status", "priority", "project", "tags", "metadata"}
+            for key, value in updates.items():
+                if key in allowed:
+                    col = "meta" if key == "metadata" else key
+                    setattr(task, col, value)
+            task.updated_at = datetime.now(timezone.utc)
+            session.commit()
+            session.refresh(task)
+            return self._task_to_dict(task)
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
+
+    def _delete_task_sync(self, identifier: str) -> bool:
+        session = self.get_session()
+        try:
+            task = self._resolve_task(session, identifier)
+            if not task:
+                return False
+            # Delete embeddings associated with this task
+            session.query(Embedding).filter_by(message_id=task.id).delete()
+            session.delete(task)
+            session.commit()
+            return True
         except Exception as e:
             session.rollback()
             raise e
