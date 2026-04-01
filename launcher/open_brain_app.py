@@ -4,7 +4,7 @@ Open Brain — macOS Menu Bar App
 Monitors the Open Brain uvicorn server (managed by launchd) from the menu bar.
 Health status, start/stop via launchctl, log viewing, login item management.
 
-The LaunchAgent (com.tjdoomer.openbrain) owns the uvicorn process with KeepAlive.
+The LaunchAgent (com.openbrain.api) owns the uvicorn process with KeepAlive.
 This app is an optional overlay for visibility and control — not load-bearing.
 """
 
@@ -23,7 +23,7 @@ OPEN_BRAIN_DIR = Path(__file__).resolve().parent.parent
 LOG_DIR = OPEN_BRAIN_DIR / "logs"
 LOG_FILE_STDERR = LOG_DIR / "api-stderr.log"
 LOG_FILE_STDOUT = LOG_DIR / "api-stdout.log"
-PLIST_NAME = "com.tjdoomer.openbrain"
+PLIST_NAME = "com.openbrain.api"
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{PLIST_NAME}.plist"
 DOCKER_CONTAINER = "open-brain-pgvector"
 
@@ -277,11 +277,11 @@ class OpenBrainApp(rumps.App):
     def _create_login_item(self):
         """Create a LaunchAgent for the menu bar app itself (not the server).
 
-        The server LaunchAgent (com.tjdoomer.openbrain) is separate and
-        should be installed via launcher/com.tjdoomer.openbrain.plist.
+        The server LaunchAgent (com.openbrain.api) is separate and
+        should be installed via launcher/com.openbrain.api.plist.
         This only auto-starts the menu bar monitor app.
         """
-        app_plist_name = "com.tjdoomer.openbrain.menubar"
+        app_plist_name = "com.openbrain.menubar"
         app_plist_path = Path.home() / "Library" / "LaunchAgents" / f"{app_plist_name}.plist"
 
         # Determine the app path
@@ -321,7 +321,7 @@ class OpenBrainApp(rumps.App):
     @staticmethod
     def _remove_login_item():
         """Unload and remove the menu bar app LaunchAgent."""
-        app_plist_path = Path.home() / "Library" / "LaunchAgents" / "com.tjdoomer.openbrain.menubar.plist"
+        app_plist_path = Path.home() / "Library" / "LaunchAgents" / "com.openbrain.menubar.plist"
         if app_plist_path.exists():
             subprocess.run(
                 ["launchctl", "unload", str(app_plist_path)],

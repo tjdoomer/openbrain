@@ -27,7 +27,7 @@ OPTIONS = {
     "plist": {
         "CFBundleName": APP_NAME,
         "CFBundleDisplayName": APP_NAME,
-        "CFBundleIdentifier": "com.tjdoomer.openbrain",
+        "CFBundleIdentifier": "com.openbrain.app",
         "CFBundleVersion": "1.0.0",
         "CFBundleShortVersionString": "1.0.0",
         "LSUIElement": True,  # Agent app — no Dock icon, menu bar only

@@ -86,10 +86,10 @@ This is the standard approach. launchd owns the uvicorn process, starts it at lo
 mkdir -p ~/open-brain/logs
 
 # Copy the template plist
-cp ~/open-brain/launcher/com.tjdoomer.openbrain.plist ~/Library/LaunchAgents/
+cp ~/open-brain/launcher/com.openbrain.api.plist ~/Library/LaunchAgents/
 
 # Edit — set your python path, repo path, and PGVector password
-nano ~/Library/LaunchAgents/com.tjdoomer.openbrain.plist
+nano ~/Library/LaunchAgents/com.openbrain.api.plist
 ```
 
 Replace these placeholders in the plist:
@@ -104,7 +104,7 @@ Then load it:
 pkill -f "uvicorn open_brain.api:app" 2>/dev/null
 
 # Load the LaunchAgent
-launchctl load ~/Library/LaunchAgents/com.tjdoomer.openbrain.plist
+launchctl load ~/Library/LaunchAgents/com.openbrain.api.plist
 
 # Verify
 curl -s http://localhost:8766/health | python3 -m json.tool
@@ -198,7 +198,7 @@ Boot sequence:
 │     └─ PostgreSQL 16 + pgvector extension              │
 │     └─ Volume: pgdata (persistent)                     │
 │                                                        │
-│  LaunchAgent (com.tjdoomer.openbrain)                  │
+│  LaunchAgent (com.openbrain.api)                  │
 │  └─ uvicorn open_brain.api:app (port 8766)             │
 │     ├─ KeepAlive: true (auto-restart on crash)         │
 │     ├─ FastAPI REST API                                │
@@ -219,10 +219,10 @@ Boot sequence:
 
 ```bash
 # Stop server
-launchctl unload ~/Library/LaunchAgents/com.tjdoomer.openbrain.plist
+launchctl unload ~/Library/LaunchAgents/com.openbrain.api.plist
 
 # Start server
-launchctl load ~/Library/LaunchAgents/com.tjdoomer.openbrain.plist
+launchctl load ~/Library/LaunchAgents/com.openbrain.api.plist
 
 # Check status
 launchctl list | grep openbrain
@@ -249,8 +249,8 @@ tail -20 ~/open-brain/logs/api-stderr.log
 ```bash
 launchctl list | grep openbrain
 # Exit code 0 = running, non-zero = check logs
-launchctl unload ~/Library/LaunchAgents/com.tjdoomer.openbrain.plist
-launchctl load ~/Library/LaunchAgents/com.tjdoomer.openbrain.plist
+launchctl unload ~/Library/LaunchAgents/com.openbrain.api.plist
+launchctl load ~/Library/LaunchAgents/com.openbrain.api.plist
 ```
 
 **Embeddings not loading:**

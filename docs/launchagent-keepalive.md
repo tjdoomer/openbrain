@@ -24,10 +24,10 @@ The LaunchAgent runs uvicorn directly. `KeepAlive: true` tells launchd to restar
 ## Plist Location
 
 ```
-~/Library/LaunchAgents/com.tjdoomer.openbrain.plist
+~/Library/LaunchAgents/com.openbrain.api.plist
 ```
 
-A template is provided at `launcher/com.tjdoomer.openbrain.plist`.
+A template is provided at `launcher/com.openbrain.api.plist`.
 
 ## Plist Contents
 
@@ -38,7 +38,7 @@ A template is provided at `launcher/com.tjdoomer.openbrain.plist`.
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.tjdoomer.openbrain</string>
+    <string>com.openbrain.api</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -113,16 +113,16 @@ A template is provided at `launcher/com.tjdoomer.openbrain.plist`.
 mkdir -p ~/open-brain/logs
 
 # 2. Copy the template plist
-cp ~/open-brain/launcher/com.tjdoomer.openbrain.plist ~/Library/LaunchAgents/
+cp ~/open-brain/launcher/com.openbrain.api.plist ~/Library/LaunchAgents/
 
 # 3. Edit the plist — set python path, repo path, and PGVector password
-nano ~/Library/LaunchAgents/com.tjdoomer.openbrain.plist
+nano ~/Library/LaunchAgents/com.openbrain.api.plist
 
 # 4. Kill any manually running instance
 pkill -f "uvicorn open_brain.api:app"
 
 # 5. Load the agent
-launchctl load ~/Library/LaunchAgents/com.tjdoomer.openbrain.plist
+launchctl load ~/Library/LaunchAgents/com.openbrain.api.plist
 
 # 6. Verify
 curl -s http://localhost:8766/health | python3 -m json.tool
@@ -132,10 +132,10 @@ curl -s http://localhost:8766/health | python3 -m json.tool
 
 ```bash
 # Stop the service (won't restart until loaded again)
-launchctl unload ~/Library/LaunchAgents/com.tjdoomer.openbrain.plist
+launchctl unload ~/Library/LaunchAgents/com.openbrain.api.plist
 
 # Start the service
-launchctl load ~/Library/LaunchAgents/com.tjdoomer.openbrain.plist
+launchctl load ~/Library/LaunchAgents/com.openbrain.api.plist
 
 # Check if running
 launchctl list | grep openbrain
