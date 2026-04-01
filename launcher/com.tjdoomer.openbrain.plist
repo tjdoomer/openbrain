@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tjdoomer.openbrain</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/python3</string>
+        <string>-m</string>
+        <string>uvicorn</string>
+        <string>open_brain.api:app</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>8766</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/path/to/open-brain</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>StandardOutPath</key>
+    <string>/path/to/open-brain/logs/api-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/path/to/open-brain/logs/api-stderr.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>BRAIN_HOST</key>
+        <string>0.0.0.0</string>
+        <key>BRAIN_PORT</key>
+        <string>8766</string>
+        <key>USE_POSTGRES</key>
+        <string>true</string>
+        <key>PGVECTOR_HOST</key>
+        <string>localhost</string>
+        <key>PGVECTOR_PORT</key>
+        <string>5432</string>
+        <key>PGVECTOR_DB</key>
+        <string>braindb</string>
+        <key>PGVECTOR_USER</key>
+        <string>brainuser</string>
+        <key>PGVECTOR_PASSWORD</key>
+        <string>YOUR_PASSWORD</string>
+        <key>EMBEDDING_MODEL</key>
+        <string>qwen3-embedding-0.6b</string>
+        <key>EMBEDDING_MODEL_PATH</key>
+        <string>models/qwen3-embedding-0.6b</string>
+        <key>EMBEDDING_DIM</key>
+        <string>1024</string>
+        <key>LOG_LEVEL</key>
+        <string>INFO</string>
+    </dict>
+</dict>
+</plist>

@@ -12,7 +12,11 @@ venv/
 
 # Runtime data / build artifacts
 data/
-launcher/
+logs/
+
+# Launcher build output (source is tracked)
+launcher/dist/
+launcher/build/
 
 # Model weights (large files, not for git)
 models/
