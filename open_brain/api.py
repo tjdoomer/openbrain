@@ -40,6 +40,17 @@ def get_embed() -> EmbeddingService:
     return _embed
 
 
+_kg = None
+
+
+def get_kg():
+    global _kg
+    if _kg is None:
+        from open_brain.knowledge_graph import KnowledgeGraph
+        _kg = KnowledgeGraph(kb=get_kb())
+    return _kg
+
+
 # --- Lifespan ---
 
 @asynccontextmanager
@@ -98,6 +109,19 @@ class TaskUpdateRequest(BaseModel):
     priority: Optional[str] = None
     project: Optional[str] = None
     tags: Optional[list[str]] = None
+    metadata: Optional[dict] = None
+
+
+class FactStoreRequest(BaseModel):
+    subject: str
+    predicate: str
+    object_entity: Optional[str] = None
+    object_value: Optional[str] = None
+    subject_type: Optional[str] = None
+    object_type: Optional[str] = None
+    confidence: float = 1.0
+    invalidate_existing: bool = True
+    source_id: Optional[str] = None
     metadata: Optional[dict] = None
 
 
@@ -369,6 +393,84 @@ async def obsidian_sync(force_full: bool = False):
     from open_brain.obsidian import import_vault
     stats = await import_vault(force_full=force_full)
     return stats
+
+
+# --- Knowledge Graph ---
+
+
+@app.post("/api/facts")
+async def store_fact(body: FactStoreRequest):
+    """Store a temporal fact triple in the knowledge graph."""
+    if not body.object_entity and not body.object_value:
+        raise HTTPException(400, "Provide either 'object_entity' or 'object_value'")
+    if body.object_entity and body.object_value:
+        raise HTTPException(400, "Provide only one of 'object_entity' or 'object_value'")
+
+    kg = get_kg()
+    return await kg.store_fact(
+        subject=body.subject,
+        predicate=body.predicate,
+        object_entity=body.object_entity,
+        object_value=body.object_value,
+        subject_type=body.subject_type,
+        object_type=body.object_type,
+        confidence=body.confidence,
+        source_id=body.source_id,
+        invalidate_existing=body.invalidate_existing,
+        metadata=body.metadata,
+    )
+
+
+@app.get("/api/facts")
+async def query_facts(
+    entity: str = Query(..., description="Entity name (case-insensitive)"),
+    predicate: Optional[str] = Query(None, description="Filter by predicate"),
+    at: Optional[str] = Query(None, description="ISO datetime for point-in-time query"),
+    include_invalid: bool = Query(False, description="Include superseded facts"),
+    limit: int = Query(20, ge=1, le=200),
+):
+    """Query facts about an entity from the knowledge graph."""
+    from datetime import datetime as dt, timezone
+
+    at_dt = None
+    if at:
+        try:
+            at_dt = dt.fromisoformat(at)
+            if at_dt.tzinfo is None:
+                at_dt = at_dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(400, f"Invalid datetime format: {at}")
+
+    kg = get_kg()
+    return await kg.query_facts(
+        entity=entity,
+        predicate=predicate,
+        at=at_dt,
+        include_invalid=include_invalid,
+        limit=limit,
+    )
+
+
+@app.get("/api/entities")
+async def list_entities(
+    type: Optional[str] = Query(None, description="Filter by entity type"),
+    query: Optional[str] = Query(None, description="Search entity names"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """List known entities in the knowledge graph."""
+    kg = get_kg()
+    return await kg.list_entities(entity_type=type, query=query, limit=limit)
+
+
+@app.get("/api/entities/{name}/history")
+async def entity_history(
+    name: str,
+    predicate: Optional[str] = Query(None, description="Filter by predicate"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Get full fact history for an entity, including invalidated facts."""
+    kg = get_kg()
+    return await kg.fact_history(entity=name, predicate=predicate, limit=limit)
 
 
 # --- Run ---

@@ -44,6 +44,7 @@ logger = logging.getLogger("open_brain.mcp")
 
 _kb = None
 _embed = None
+_kg = None
 
 
 def _get_kb() -> KnowledgeBase:
@@ -58,6 +59,15 @@ def _get_embed() -> EmbeddingService:
     if _embed is None:
         _embed = EmbeddingService(kb=_get_kb())
     return _embed
+
+
+def _get_kg():
+    """Lazy-init knowledge graph — import deferred to avoid circular loads."""
+    global _kg
+    if _kg is None:
+        from open_brain.knowledge_graph import KnowledgeGraph
+        _kg = KnowledgeGraph(kb=_get_kb())
+    return _kg
 
 
 # --- MCP Server ---
@@ -348,6 +358,174 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["topic"]
             }
         ),
+
+        # --- Knowledge Graph tools ---
+
+        types.Tool(
+            name="brain_fact_store",
+            description=(
+                "Store a structured fact in the knowledge graph as a temporal triple. "
+                "Facts have the form: (subject, predicate, object) with time validity.\n\n"
+                "Examples:\n"
+                "- (TJ, works_at, QSIC) — entity-to-entity relationship\n"
+                "- (auth_service, port, '8080') — entity-to-value attribute\n"
+                "- (auth_service, uses, OAuth2) — replacing a previous fact\n\n"
+                "ENTITY AUTO-CREATION:\n"
+                "- Subject and object entities are automatically created if they don't exist\n"
+                "- Entity names are matched case-insensitively\n"
+                "- Provide subject_type/object_type hints to categorize new entities\n\n"
+                "TEMPORAL INVALIDATION:\n"
+                "- By default, storing a fact with the same subject+predicate invalidates "
+                "the previous current fact (sets its valid_to to now)\n"
+                "- Set invalidate_existing=false for multi-valued predicates like "
+                "'knows' or 'depends_on'\n"
+                "- Old facts are never deleted — they remain in history with valid_to set"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "subject": {
+                        "type": "string",
+                        "description": "Subject entity name (e.g. 'TJ', 'auth_service', 'DT-105')"
+                    },
+                    "predicate": {
+                        "type": "string",
+                        "description": "Relationship type (e.g. 'works_at', 'uses', 'depends_on', 'located_in')"
+                    },
+                    "object_entity": {
+                        "type": "string",
+                        "description": "Object entity name, for entity-to-entity facts (e.g. 'QSIC', 'OAuth2')"
+                    },
+                    "object_value": {
+                        "type": "string",
+                        "description": "Literal value, for entity-to-value facts (e.g. '8080', 'true', 'Melbourne')"
+                    },
+                    "subject_type": {
+                        "type": "string",
+                        "description": "Entity type hint for subject (person, service, project, concept, tool, org)"
+                    },
+                    "object_type": {
+                        "type": "string",
+                        "description": "Entity type hint for object entity"
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "default": 1.0,
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "Confidence in this fact (0-1)"
+                    },
+                    "invalidate_existing": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": (
+                            "Auto-invalidate previous facts with same subject+predicate. "
+                            "Set false for multi-valued predicates like 'knows' or 'depends_on'."
+                        )
+                    },
+                    "source_id": {
+                        "type": "string",
+                        "description": "Optional message ID this fact was extracted from"
+                    },
+                },
+                "required": ["subject", "predicate"],
+            }
+        ),
+        types.Tool(
+            name="brain_fact_query",
+            description=(
+                "Query current facts about an entity from the knowledge graph. "
+                "Returns facts where the entity appears as either subject or object.\n\n"
+                "Supports point-in-time queries: set 'at' to see what was true at a "
+                "specific date. Set include_invalid=true to also see superseded facts."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entity": {
+                        "type": "string",
+                        "description": "Entity name to query (case-insensitive)"
+                    },
+                    "predicate": {
+                        "type": "string",
+                        "description": "Optional: filter to specific predicate"
+                    },
+                    "at": {
+                        "type": "string",
+                        "description": "Optional: ISO datetime for point-in-time query (e.g. '2025-06-01T00:00:00')"
+                    },
+                    "include_invalid": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Include superseded/invalidated facts"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 20,
+                        "minimum": 1,
+                        "maximum": 100,
+                    },
+                },
+                "required": ["entity"],
+            }
+        ),
+        types.Tool(
+            name="brain_fact_history",
+            description=(
+                "Get the full temporal history of facts about an entity. "
+                "Shows all facts including invalidated ones, ordered by valid_from date. "
+                "Use this to see how facts have changed over time — e.g., tracking which "
+                "technology a service used at different points in time."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entity": {
+                        "type": "string",
+                        "description": "Entity name (case-insensitive)"
+                    },
+                    "predicate": {
+                        "type": "string",
+                        "description": "Optional: filter to specific predicate"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 50,
+                        "minimum": 1,
+                        "maximum": 200,
+                    },
+                },
+                "required": ["entity"],
+            }
+        ),
+        types.Tool(
+            name="brain_entity_list",
+            description=(
+                "List known entities in the knowledge graph. "
+                "Use this to discover what entities exist before querying facts. "
+                "Filter by type (person, service, project, etc.) or search by name."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "description": "Filter by entity type (person, service, project, concept, tool, org)"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Search filter on entity name (case-insensitive substring match)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 50,
+                        "minimum": 1,
+                        "maximum": 200,
+                    },
+                },
+                "required": [],
+            }
+        ),
     ]
 
 
@@ -368,6 +546,14 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             return await _task_update(arguments)
         elif name == "brain_context":
             return await _get_context(arguments)
+        elif name == "brain_fact_store":
+            return await _fact_store(arguments)
+        elif name == "brain_fact_query":
+            return await _fact_query(arguments)
+        elif name == "brain_fact_history":
+            return await _fact_history(arguments)
+        elif name == "brain_entity_list":
+            return await _entity_list(arguments)
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
     except Exception as e:
@@ -629,6 +815,151 @@ async def _task_update(args: dict) -> list[types.TextContent]:
         lines.append(f"Project: {task['project']}")
     if task.get("priority"):
         lines.append(f"Priority: {task['priority']}")
+
+    return [types.TextContent(type="text", text="\n".join(lines))]
+
+
+# --- Knowledge Graph handlers ---
+
+
+async def _fact_store(args: dict) -> list[types.TextContent]:
+    subject = args.get("subject", "")
+    predicate = args.get("predicate", "")
+    if not subject or not predicate:
+        return [types.TextContent(
+            type="text", text="Error: 'subject' and 'predicate' are required"
+        )]
+
+    object_entity = args.get("object_entity")
+    object_value = args.get("object_value")
+    if not object_entity and not object_value:
+        return [types.TextContent(
+            type="text",
+            text="Error: provide either 'object_entity' or 'object_value'"
+        )]
+
+    kg = _get_kg()
+    result = await kg.store_fact(
+        subject=subject,
+        predicate=predicate,
+        object_entity=object_entity,
+        object_value=object_value,
+        subject_type=args.get("subject_type"),
+        object_type=args.get("object_type"),
+        confidence=args.get("confidence", 1.0),
+        source_id=args.get("source_id"),
+        invalidate_existing=args.get("invalidate_existing", True),
+    )
+
+    obj_display = result["object"]
+    lines = [
+        f"Fact stored: ({result['subject']}, {result['predicate']}, {obj_display})",
+        f"Valid from: {result['valid_from']}",
+        f"Current: {result['is_current']}",
+    ]
+    if result.get("invalidated_count", 0) > 0:
+        lines.append(f"Invalidated {result['invalidated_count']} previous fact(s)")
+
+    return [types.TextContent(type="text", text="\n".join(lines))]
+
+
+async def _fact_query(args: dict) -> list[types.TextContent]:
+    entity = args.get("entity", "")
+    if not entity:
+        return [types.TextContent(type="text", text="Error: 'entity' is required")]
+
+    # Parse optional datetime
+    at = None
+    at_str = args.get("at")
+    if at_str:
+        from datetime import datetime, timezone
+        try:
+            at = datetime.fromisoformat(at_str)
+            if at.tzinfo is None:
+                at = at.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return [types.TextContent(
+                type="text", text=f"Error: invalid datetime format: {at_str}"
+            )]
+
+    kg = _get_kg()
+    facts = await kg.query_facts(
+        entity=entity,
+        predicate=args.get("predicate"),
+        at=at,
+        include_invalid=args.get("include_invalid", False),
+        limit=args.get("limit", 20),
+    )
+
+    if not facts:
+        label = f" at {at_str}" if at_str else ""
+        return [types.TextContent(
+            type="text", text=f"No facts found for '{entity}'{label}"
+        )]
+
+    lines = [f"-- Facts about '{entity}' ({len(facts)} results) --"]
+    for f in facts:
+        status = "CURRENT" if f["is_current"] else f"invalidated {f['valid_to']}"
+        lines.append(
+            f"\n  ({f['subject']}, {f['predicate']}, {f['object']}) "
+            f"[{status}]"
+        )
+        lines.append(f"  Valid from: {f['valid_from']}")
+        if f.get("confidence") and f["confidence"] < 1.0:
+            lines.append(f"  Confidence: {f['confidence']:.0%}")
+
+    return [types.TextContent(type="text", text="\n".join(lines))]
+
+
+async def _fact_history(args: dict) -> list[types.TextContent]:
+    entity = args.get("entity", "")
+    if not entity:
+        return [types.TextContent(type="text", text="Error: 'entity' is required")]
+
+    kg = _get_kg()
+    facts = await kg.fact_history(
+        entity=entity,
+        predicate=args.get("predicate"),
+        limit=args.get("limit", 50),
+    )
+
+    if not facts:
+        return [types.TextContent(
+            type="text", text=f"No history found for '{entity}'"
+        )]
+
+    lines = [f"-- Fact history for '{entity}' ({len(facts)} entries) --"]
+    for f in facts:
+        valid_range = f['valid_from']
+        if f['valid_to']:
+            valid_range += f" -> {f['valid_to']}"
+        else:
+            valid_range += " -> present"
+
+        marker = "  " if f["is_current"] else "x "
+        lines.append(
+            f"\n{marker}({f['subject']}, {f['predicate']}, {f['object']})"
+        )
+        lines.append(f"  Period: {valid_range}")
+
+    return [types.TextContent(type="text", text="\n".join(lines))]
+
+
+async def _entity_list(args: dict) -> list[types.TextContent]:
+    kg = _get_kg()
+    entities = await kg.list_entities(
+        entity_type=args.get("type"),
+        query=args.get("query"),
+        limit=args.get("limit", 50),
+    )
+
+    if not entities:
+        return [types.TextContent(type="text", text="No entities found")]
+
+    lines = [f"-- Entities ({len(entities)}) --", ""]
+    for e in entities:
+        type_tag = f" [{e['type']}]" if e.get("type") else ""
+        lines.append(f"{e['name']}{type_tag}  ({e['current_facts']} current facts)")
 
     return [types.TextContent(type="text", text="\n".join(lines))]
 

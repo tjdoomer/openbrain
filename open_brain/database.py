@@ -12,7 +12,7 @@ from typing import Optional
 from uuid import uuid4
 
 try:
-    from sqlalchemy import create_engine, text, Column, String, Text, DateTime, JSON
+    from sqlalchemy import create_engine, text, Column, String, Text, DateTime, JSON, Float
     from sqlalchemy.orm import sessionmaker, declarative_base
 except ImportError:
     raise ImportError("Install SQLAlchemy: pip install sqlalchemy")
@@ -79,6 +79,40 @@ class Task(Base):
     meta = Column("metadata", JSONType, nullable=True)
     created_at = Column(DateTime, nullable=False, index=True)
     updated_at = Column(DateTime, nullable=True)
+
+
+class Entity(Base):
+    """Knowledge graph entity — a person, service, project, concept, or tool"""
+    __tablename__ = "entities"
+
+    id = Column(String(36), primary_key=True)
+    name = Column(String(200), nullable=False, unique=True, index=True)
+    display_name = Column(String(200), nullable=False)
+    entity_type = Column(String(50), nullable=True, index=True)
+    meta = Column("metadata", JSONType, nullable=True)
+    created_at = Column(DateTime, nullable=False)
+
+
+class Fact(Base):
+    """Knowledge graph fact — a temporal triple (subject, predicate, object)
+
+    Facts have validity windows: valid_from marks when the fact became true,
+    valid_to marks when it was superseded (NULL = still current). Old facts
+    are never deleted — they remain as history with valid_to set.
+    """
+    __tablename__ = "facts"
+
+    id = Column(String(36), primary_key=True)
+    subject_id = Column(String(36), nullable=False, index=True)
+    predicate = Column(String(200), nullable=False)
+    object_entity_id = Column(String(36), nullable=True)
+    object_value = Column(Text, nullable=True)
+    confidence = Column(Float, default=1.0)
+    source_id = Column(String(36), nullable=True)
+    valid_from = Column(DateTime, nullable=False)
+    valid_to = Column(DateTime, nullable=True, index=True)
+    meta = Column("metadata", JSONType, nullable=True)
+    created_at = Column(DateTime, nullable=False)
 
 
 class KnowledgeBase:
@@ -155,6 +189,34 @@ class KnowledgeBase:
             except Exception as e:
                 # IVFFlat requires data to build — will succeed after migration
                 logger.info("Vector index deferred (needs data first): %s", e)
+
+        # Knowledge graph constraints and indexes
+        with self.engine.connect() as conn:
+            try:
+                conn.execute(text("""
+                    ALTER TABLE facts ADD CONSTRAINT chk_fact_object
+                    CHECK (
+                        (object_entity_id IS NOT NULL AND object_value IS NULL)
+                        OR (object_entity_id IS NULL AND object_value IS NOT NULL)
+                    )
+                """))
+                conn.commit()
+            except Exception:
+                pass  # Constraint already exists
+            try:
+                conn.execute(text("""
+                    CREATE INDEX IF NOT EXISTS ix_facts_subject_pred_valid
+                    ON facts (subject_id, predicate, valid_to)
+                """))
+                conn.execute(text("""
+                    CREATE INDEX IF NOT EXISTS ix_facts_object_entity
+                    ON facts (object_entity_id, valid_to)
+                    WHERE object_entity_id IS NOT NULL
+                """))
+                conn.commit()
+                logger.info("Knowledge graph indexes ready")
+            except Exception as e:
+                logger.warning("Could not create knowledge graph indexes: %s", e)
 
         self.Session = sessionmaker(bind=self.engine)
 
